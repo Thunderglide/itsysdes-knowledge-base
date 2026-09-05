@@ -1,0 +1,37 @@
+# Secrets and local credentials
+.env
+.env.*
+!.env.example
+
+# Local machine config (paths to Telegram export, models)
+config.yaml
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Pipeline runtime and generated knowledge base
+.cursor-scratch/
+kb/*
+!kb/.gitkeep
+
+# Local databases / Telegram exports
+*.db
+*.sqlite
+*.sqlite3

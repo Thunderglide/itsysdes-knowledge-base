@@ -1,0 +1,39 @@
+# Copy this file to config.yaml and fill in local paths.
+#   cp config.example.yaml config.yaml
+
+sqlite_path: /absolute/path/to/telegram_export.db
+# Attachment file_path values are relative to this directory (files/{chat}/{msg}/...).
+files_root: /absolute/path/to/tg-loader/data
+# Empty = all chats. Filter by username, telegram_id, or title.
+chats: []
+output_dir: kb
+
+lmstudio:
+  base_url: http://127.0.0.1:1234/v1
+  api_key: lm-studio
+  # Empty model → first id from GET /v1/models
+  model: ""
+
+cursor:
+  api_key_env: CURSOR_API_KEY
+  scratch_dir: .cursor-scratch
+  model: composer-2.5
+
+# Truncate a single message body before sending it to an LLM.
+max_message_chars: 6000
+# Max tokens (cl100k_base) of the message payload in one pipeline pass.
+max_batch_tokens: 120000
+
+agents:
+  structure:
+    backend: cursor
+    model: composer-2.5
+  generator:
+    backend: cursor
+    model: composer-2.5
+  critic:
+    backend: cursor
+    model: composer-2.5
+  polisher:
+    backend: cursor
+    model: composer-2.5
