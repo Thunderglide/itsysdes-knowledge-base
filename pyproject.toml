@@ -1,10 +1,9 @@
 [project]
 name = "kb-pipeline"
-version = "0.1.0"
+version = "0.2.0"
 description = "Multi-agent LangGraph pipeline that turns Telegram exports into a Markdown knowledge base."
 requires-python = ">=3.11"
 dependencies = [
-    "cursor-sdk>=0.1.0",
     "langgraph>=0.2.0",
     "langgraph-checkpoint-sqlite>=2.0.0",
     "openai>=1.40.0",

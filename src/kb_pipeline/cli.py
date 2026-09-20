@@ -7,6 +7,7 @@ import sys
 
 from dotenv import load_dotenv
 
+from kb_pipeline.cleanup import clean_checkpoints, clean_kb, clean_session
 from kb_pipeline.config import load_config
 from kb_pipeline.graph import PipelineRuntime, compiled_graph
 from kb_pipeline.ingest import (
@@ -15,11 +16,15 @@ from kb_pipeline.ingest import (
     build_work_items,
     list_subchats,
 )
-from kb_pipeline.persist import ensure_output_dirs, load_hierarchy
+from kb_pipeline.persist import (
+    checkpoint_db_path,
+    ensure_output_dirs,
+    last_run_path,
+    load_hierarchy,
+)
 from kb_pipeline.state import STAGE_ORDER
 
 logger = logging.getLogger(__name__)
-LAST_RUN = "last_run.json"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,6 +44,72 @@ def main(argv: list[str] | None = None) -> int:
 
     list_p = sub.add_parser("list-subchats", help="Показать доступные подчаты")
 
+    clean_p = sub.add_parser(
+        "clean",
+        help="Очистить чекпоинт, незавершённую сессию или всю собранную базу знаний",
+    )
+    clean_mode = clean_p.add_mutually_exclusive_group(required=True)
+    clean_mode.add_argument(
+        "--session",
+        action="store_true",
+        help="Удалить чекпоинт, last_run, кэш ingest и черновики незавершённого прогона",
+    )
+    clean_mode.add_argument(
+        "--checkpoints",
+        action="store_true",
+        help="Удалить только LangGraph-чекпоинт (lg.sqlite), сохранив статьи и hierarchy.json",
+    )
+    clean_mode.add_argument(
+        "--kb",
+        action="store_true",
+        help="Удалить всю базу знаний в output_dir (кроме .gitkeep)",
+    )
+    clean_p.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Не спрашивать подтверждение",
+    )
+
+    curate_p = sub.add_parser(
+        "curate",
+        help="Слить мелкие, разрезать крупные, переложить и разметить статьи после прогона",
+    )
+    curate_sub = curate_p.add_subparsers(dest="curate_command", required=True)
+    for kind, help_text in (
+        ("cleanup", "Удалить пустые оболочки и слить кросс-папочные дубли"),
+        ("merge", "Предложить или применить слияние заглушек"),
+        ("reparent", "Разложить статьи по таксономии папок"),
+        ("relink", "Починить межстраничные ссылки после переносов и слияний"),
+        ("split", "Предложить или применить разбиение крупных статей"),
+        ("tag", "Проставить теги из закрытого словаря"),
+    ):
+        item = curate_sub.add_parser(kind, help=help_text)
+        mode = item.add_mutually_exclusive_group(required=True)
+        mode.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Записать JSON-план, не меняя базу",
+        )
+        mode.add_argument(
+            "--apply",
+            metavar="PLAN",
+            help="Применить JSON-план (только если пайплайн завершён)",
+        )
+        item.add_argument(
+            "-o",
+            "--output",
+            default=None,
+            help="Путь для плана dry-run (по умолчанию kb/curate/{kind}-plan.json)",
+        )
+        item.add_argument(
+            "--polish",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+            help="Консервативно пригладить markdown после apply (по умолчанию включено для merge/split)",
+        )
+        item.add_argument("--fake", action="store_true")
+
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -48,6 +119,12 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_run(args)
     if args.command == "resume":
         return cmd_resume(args)
+    if args.command == "clean":
+        return cmd_clean(args)
+    if args.command == "curate":
+        from kb_pipeline.curate import cmd_curate
+
+        return cmd_curate(args)
     parser.error("unknown command")
     return 2
 
@@ -141,7 +218,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         from kb_pipeline.persist import load_article_record
 
         record = load_article_record(
-            config, article_id, article.title, folder_path, slug
+            config, article_id, article.title, folder_path, slug, tags=article.tags
         )
         initial["articles"][article_id] = record.model_dump()
 
@@ -149,16 +226,29 @@ def cmd_run(args: argparse.Namespace) -> int:
     return _invoke(config, initial, thread_id, fake=args.fake, persist_last=True)
 
 
+def cmd_clean(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    if args.session:
+        return clean_session(
+            config, yes=args.yes, stdout=sys.stdout, stderr=sys.stderr
+        )
+    if args.checkpoints:
+        return clean_checkpoints(
+            config, yes=args.yes, stdout=sys.stdout, stderr=sys.stderr
+        )
+    return clean_kb(config, yes=args.yes, stdout=sys.stdout, stderr=sys.stderr)
+
+
 def cmd_resume(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    last_path = config.output_dir_resolved / LAST_RUN
+    last_path = last_run_path(config)
     if not last_path.exists():
         print("Нет last_run.json — сначала выполните run.", file=sys.stderr)
         return 1
     meta = json.loads(last_path.read_text(encoding="utf-8"))
     thread_id = meta["thread_id"]
     fake = args.fake or meta.get("fake", False)
-    checkpoint = config.output_dir_resolved / ".checkpoints" / "lg.sqlite"
+    checkpoint = checkpoint_db_path(config)
     runtime = PipelineRuntime(config=config, fake=fake)
     graph_config = {
         "configurable": {
@@ -187,7 +277,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
 def _invoke(config, initial: dict, thread_id: str, *, fake: bool, persist_last: bool) -> int:
     runtime = PipelineRuntime(config=config, fake=fake)
-    checkpoint = config.output_dir_resolved / ".checkpoints" / "lg.sqlite"
+    checkpoint = checkpoint_db_path(config)
     graph_config = {
         "configurable": {
             "thread_id": thread_id,
@@ -195,7 +285,7 @@ def _invoke(config, initial: dict, thread_id: str, *, fake: bool, persist_last: 
         }
     }
     if persist_last:
-        (config.output_dir_resolved / LAST_RUN).write_text(
+        last_run_path(config).write_text(
             json.dumps(
                 {
                     "thread_id": thread_id,

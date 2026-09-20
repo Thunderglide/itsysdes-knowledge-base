@@ -37,4 +37,6 @@ def run_generator(
         },
         ensure_ascii=False,
     )
-    return complete_text(backend, system, user)
+    return complete_text(
+        backend, system, user, fallback=existing_draft.strip() or None
+    )

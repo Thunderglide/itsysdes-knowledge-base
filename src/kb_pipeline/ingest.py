@@ -13,6 +13,7 @@ from kb_pipeline.source import (
     load_thread_messages,
     load_work_item_messages,
     pack_batches,
+    parse_telegram_message_id,
     subchat_matches,
 )
 
@@ -132,8 +133,8 @@ def build_work_items(
             )
             for index in kept:
                 batch = batches[index - 1]
-                first_id = _telegram_message_id(batch[0])
-                last_id = _telegram_message_id(batch[-1])
+                first_id = parse_telegram_message_id(batch[0].id)
+                last_id = parse_telegram_message_id(batch[-1].id)
                 part_file = f"batch_{index:03d}"
                 for message in batch:
                     message.part_file = part_file
@@ -163,8 +164,3 @@ def ingest_part(config: Config, item: WorkItem) -> tuple[list[Message], Path]:
     cache_path = cache_dir / f"{item.part_file}.jsonl"
     cache_path.write_text(messages_to_jsonl(messages), encoding="utf-8")
     return messages, cache_path
-
-
-def _telegram_message_id(message: Message) -> int:
-    _, _, suffix = message.id.partition(":")
-    return int(suffix or message.id)

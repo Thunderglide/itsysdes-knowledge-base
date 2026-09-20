@@ -13,11 +13,20 @@ lmstudio:
   api_key: lm-studio
   # Empty model → first id from GET /v1/models
   model: ""
+  # Seconds to wait for one completion. 0 = no read timeout.
+  # Default OpenAI SDK is 600s and retries twice — that starts a second
+  # generation if a local/LM Link model is still answering.
+  timeout_sec: 3600
+  max_retries: 0
 
-cursor:
-  api_key_env: CURSOR_API_KEY
-  scratch_dir: .cursor-scratch
-  model: composer-2.5
+deepseek:
+  base_url: https://api.deepseek.com
+  api_key_env: DEEPSEEK_API_KEY
+  model: deepseek-flash
+  timeout_sec: 600
+  max_retries: 0
+  # Hard ceiling (Flash default is 384k). Actual request is ~1.4× draft.
+  max_tokens: 131072
 
 # Truncate a single message body before sending it to an LLM.
 max_message_chars: 6000
@@ -26,14 +35,35 @@ max_batch_tokens: 120000
 
 agents:
   structure:
-    backend: cursor
-    model: composer-2.5
+    backend: deepseek
+    model: deepseek-flash
   generator:
-    backend: cursor
-    model: composer-2.5
+    backend: deepseek
+    model: deepseek-flash
   critic:
-    backend: cursor
-    model: composer-2.5
+    backend: deepseek
+    model: deepseek-flash
   polisher:
-    backend: cursor
-    model: composer-2.5
+    backend: deepseek
+    model: deepseek-flash
+  merge:
+    backend: deepseek
+    model: deepseek-flash
+  split:
+    backend: deepseek
+    model: deepseek-flash
+  reparent:
+    backend: deepseek
+    model: deepseek-flash
+  tag:
+    backend: deepseek
+    model: deepseek-flash
+
+# Пороги куратора (kb-pipeline curate). Можно не указывать — есть значения по умолчанию.
+# curate:
+#   merge_max_messages: 5
+#   merge_target_max: 80
+#   split_min_messages: 120
+#   split_min_chars: 40000
+#   taxonomy_path: taxonomy.yaml
+#   tag_max: 8

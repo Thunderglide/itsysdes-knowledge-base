@@ -14,6 +14,8 @@ from kb_pipeline.source import (
     message_token_count,
     normalize_date,
     pack_batches,
+    parse_telegram_message_id,
+    source_message_id,
     strip_attachment_paths,
     subchat_id_for,
 )
@@ -32,6 +34,18 @@ def _config(tmp_path: Path, db: Path, **kwargs) -> Config:
 def test_subchat_id_for():
     assert subchat_id_for(thread_id=107312, telegram_id=1099595414) == "topic_107312"
     assert subchat_id_for(thread_id=None, telegram_id=2881596567) == "chat_2881596567"
+
+
+def test_source_message_id_format():
+    assert source_message_id(1099595414, 60491, 91452) == "1099595414:60491:91452"
+    assert source_message_id(1099595414, None, 12345) == "1099595414:0:12345"
+    assert source_message_id(1099595414, 0, 12345) == "1099595414:0:12345"
+
+
+def test_parse_telegram_message_id_uses_last_segment():
+    assert parse_telegram_message_id("1099595414:60491:91452") == 91452
+    assert parse_telegram_message_id("1099595414:0:12345") == 12345
+    assert parse_telegram_message_id("91452") == 91452
 
 
 def test_filter_part_indices_inclusive_range():
@@ -85,8 +99,13 @@ def test_groups_by_thread_and_orders_old_to_new(tmp_path: Path):
     assert [item.subchat_id for item in items] == ["topic_1", "topic_2", "chat_1099595414"]
     messages, _ = ingest_part(cfg, items[0])
     assert [message.text for message in messages] == ["first", "second"]
-    assert messages[0].id == "1099595414:10"
+    assert messages[0].id == "1099595414:1:10"
     assert messages[0].date == "2024-01-01 00:00:00"
+    channel = next(item for item in items if item.subchat_id == "chat_1099595414")
+    channel_messages, _ = ingest_part(cfg, channel)
+    assert channel_messages[0].id == "1099595414:0:5"
+    assert channel.first_message_id == 5
+    assert channel.last_message_id == 5
 
 
 def test_chats_filter(tmp_path: Path):

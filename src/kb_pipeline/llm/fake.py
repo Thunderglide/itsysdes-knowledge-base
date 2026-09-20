@@ -10,6 +10,16 @@ class FakeBackend:
 
     def complete(self, system: str, user: str, *, json_mode: bool = False) -> str:
         lowered = system.lower()
+        if "слияни" in lowered:
+            return self._merge(user)
+        if "разбиени" in lowered:
+            return self._split(user)
+        if "таксоном" in lowered or "раскладк" in lowered:
+            return self._reparent(user)
+        if "разметки тег" in lowered or "тегами статей" in lowered:
+            return self._tag(user)
+        if "склейк" in lowered or "консервативн" in lowered:
+            return self._curate_polish(user)
         if "структуризатор" in lowered or "иерарх" in lowered:
             return self._structure(user)
         if "критик" in lowered:
@@ -116,3 +126,105 @@ class FakeBackend:
         else:
             extra.append("- Уточнить границы темы при следующем файле сообщений.")
         return draft.rstrip() + "\n" + "\n".join(extra) + "\n"
+
+    def _merge(self, user: str) -> str:
+        payload = json.loads(user) if user.strip().startswith("{") else {}
+        articles = payload.get("articles") or []
+        stubs = [
+            item
+            for item in articles
+            if int(item.get("message_count") or 0) <= 5
+        ]
+        targets = [
+            item
+            for item in articles
+            if int(item.get("message_count") or 0) > 5
+        ]
+        actions = []
+        if stubs and targets:
+            stub = stubs[0]
+            folder = stub.get("folder")
+            same = [item for item in targets if item.get("folder") == folder] or targets
+            actions.append(
+                {
+                    "sources": [stub.get("id")],
+                    "target": same[0].get("id"),
+                    "reason": "fake merge",
+                }
+            )
+        return json.dumps({"actions": actions}, ensure_ascii=False)
+
+    def _split(self, user: str) -> str:
+        payload = json.loads(user) if user.strip().startswith("{") else {}
+        actions = []
+        for candidate in payload.get("candidates") or []:
+            sections = [
+                item.get("heading")
+                for item in (candidate.get("sections") or [])
+                if item.get("heading")
+            ]
+            if len(sections) < 2:
+                continue
+            mid = max(1, len(sections) // 2)
+            folder = candidate.get("folder") or ""
+            actions.append(
+                {
+                    "source": candidate.get("id"),
+                    "parts": [
+                        {
+                            "title": f"{candidate.get('title')} (1)",
+                            "slug": "",
+                            "folder": folder,
+                            "headings": sections[:mid],
+                        },
+                        {
+                            "title": f"{candidate.get('title')} (2)",
+                            "slug": "",
+                            "folder": folder,
+                            "headings": sections[mid:],
+                        },
+                    ],
+                }
+            )
+            break
+        return json.dumps({"actions": actions}, ensure_ascii=False)
+
+    def _reparent(self, user: str) -> str:
+        payload = json.loads(user) if user.strip().startswith("{") else {}
+        folders = payload.get("taxonomy", {}).get("folders") or []
+        sql_folder = next((item for item in folders if item.endswith("/SQL") or item.endswith("SQL")), "")
+        actions = []
+        for article in payload.get("articles") or []:
+            title = str(article.get("title") or "").lower()
+            current = str(article.get("folder") or "")
+            if "sql" in title and sql_folder and sql_folder != current:
+                actions.append(
+                    {
+                        "id": article.get("id"),
+                        "folder": sql_folder,
+                        "reason": "fake sql reparent",
+                    }
+                )
+        return json.dumps({"actions": actions, "proposed_folders": []}, ensure_ascii=False)
+
+    def _tag(self, user: str) -> str:
+        payload = json.loads(user) if user.strip().startswith("{") else {}
+        allowed = set(payload.get("allowed", {}).get("topics") or [])
+        allowed.update(payload.get("allowed", {}).get("tech") or [])
+        allowed.update(payload.get("allowed", {}).get("formats") or [])
+        actions = []
+        for article in payload.get("articles") or []:
+            title = str(article.get("title") or "").lower()
+            tags: list[str] = []
+            for token in ("sql", "kafka", "bpmn", "rest", "ux", "требования"):
+                if token in title and token in allowed:
+                    tags.append(token)
+            if "howto" in allowed:
+                tags.append("howto")
+            actions.append({"id": article.get("id"), "tags": tags, "proposed_tags": []})
+        return json.dumps({"actions": actions}, ensure_ascii=False)
+
+    def _curate_polish(self, user: str) -> str:
+        payload = json.loads(user) if user.strip().startswith("{") else {}
+        text = str(payload.get("text") or "")
+        return text if text.endswith("\n") or not text else text + "\n"

@@ -35,6 +35,7 @@ class SubchatInfo:
 class _RawMessage:
     pk: int
     message_id: int
+    thread_id: int | None
     author_name: str
     date: str
     text: str
@@ -54,6 +55,88 @@ def subchat_id_for(*, thread_id: int | None, telegram_id: int) -> str:
     if thread_id is None:
         return f"chat_{telegram_id}"
     return f"topic_{thread_id}"
+
+
+def source_message_id(
+    chat_telegram_id: int,
+    thread_id: int | None,
+    message_id: int,
+) -> str:
+    topic = 0 if thread_id is None else thread_id
+    return f"{chat_telegram_id}:{topic}:{message_id}"
+
+
+def parse_telegram_message_id(source_id: str) -> int:
+    _, _, suffix = source_id.rpartition(":")
+    return int(suffix or source_id)
+
+
+def parse_source_id(source_id: str) -> tuple[int, int | None, int]:
+    parts = source_id.split(":")
+    if len(parts) != 3:
+        raise ValueError(f"Bad source message id: {source_id}")
+    telegram_id = int(parts[0])
+    topic = int(parts[1])
+    message_id = int(parts[2])
+    thread_id = None if topic == 0 else topic
+    return telegram_id, thread_id, message_id
+
+
+def load_messages_by_ids(
+    conn: sqlite3.Connection, source_ids: Iterable[str]
+) -> list[Message]:
+    wanted: list[str] = []
+    seen: set[str] = set()
+    for raw in source_ids:
+        item = str(raw or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        wanted.append(item)
+    if not wanted:
+        return []
+
+    grouped: dict[tuple[int, int | None], list[int]] = {}
+    for source_id in wanted:
+        try:
+            telegram_id, thread_id, message_id = parse_source_id(source_id)
+        except ValueError:
+            continue
+        grouped.setdefault((telegram_id, thread_id), []).append(message_id)
+
+    chats = {
+        int(row["telegram_id"]): ChatInfo(
+            id=int(row["id"]),
+            telegram_id=int(row["telegram_id"]),
+            title=row["title"] or "",
+            type=row["type"] or "",
+            username=row["username"] or "",
+        )
+        for row in conn.execute(
+            "SELECT id, telegram_id, title, type, username FROM chats"
+        )
+    }
+
+    found: dict[str, Message] = {}
+    for (telegram_id, thread_id), message_ids in grouped.items():
+        chat = chats.get(telegram_id)
+        if chat is None:
+            continue
+        raw_items = _fetch_raw_messages_by_ids(
+            conn, chat.id, thread_id, message_ids
+        )
+        subchat = subchat_id_for(thread_id=thread_id, telegram_id=telegram_id)
+        for raw in raw_items:
+            mapped = _to_message(
+                raw,
+                telegram_id=telegram_id,
+                part_file="",
+                subchat_id=subchat,
+            )
+            if mapped is not None:
+                found[mapped.id] = mapped
+
+    return [found[item] for item in wanted if item in found]
 
 
 def encoding():
@@ -266,7 +349,7 @@ def _fetch_raw_messages(
     last: int | None,
 ) -> list[_RawMessage]:
     sql = [
-        "SELECT id, message_id, author_name, date, text",
+        "SELECT id, message_id, thread_id, author_name, date, text",
         "FROM messages",
         "WHERE chat_id = ?",
     ]
@@ -287,9 +370,11 @@ def _fetch_raw_messages(
     by_pk: dict[int, _RawMessage] = {}
     ordered: list[_RawMessage] = []
     for row in rows:
+        thread_raw = row["thread_id"]
         item = _RawMessage(
             pk=int(row["id"]),
             message_id=int(row["message_id"]),
+            thread_id=int(thread_raw) if thread_raw is not None else None,
             author_name=row["author_name"] or "",
             date=row["date"] or "",
             text=row["text"] or "",
@@ -298,6 +383,52 @@ def _fetch_raw_messages(
         ordered.append(item)
     _attach_files(conn, by_pk)
     return ordered
+
+
+def _fetch_raw_messages_by_ids(
+    conn: sqlite3.Connection,
+    chat_db_id: int,
+    thread_id: int | None,
+    message_ids: list[int],
+) -> list[_RawMessage]:
+    unique = list(dict.fromkeys(message_ids))
+    if not unique:
+        return []
+    items: list[_RawMessage] = []
+    chunk = 500
+    for start in range(0, len(unique), chunk):
+        part = unique[start : start + chunk]
+        sql = [
+            "SELECT id, message_id, thread_id, author_name, date, text",
+            "FROM messages",
+            "WHERE chat_id = ?",
+            "AND message_id IN (" + ",".join("?" * len(part)) + ")",
+        ]
+        params: list[Any] = [chat_db_id, *part]
+        if thread_id is None:
+            sql.append("AND thread_id IS NULL")
+        else:
+            sql.append("AND thread_id = ?")
+            params.append(thread_id)
+        sql.append("ORDER BY date ASC, message_id ASC")
+        rows = conn.execute(" ".join(sql), params).fetchall()
+        by_pk: dict[int, _RawMessage] = {}
+        chunk_items: list[_RawMessage] = []
+        for row in rows:
+            thread_raw = row["thread_id"]
+            item = _RawMessage(
+                pk=int(row["id"]),
+                message_id=int(row["message_id"]),
+                thread_id=int(thread_raw) if thread_raw is not None else None,
+                author_name=row["author_name"] or "",
+                date=row["date"] or "",
+                text=row["text"] or "",
+            )
+            by_pk[item.pk] = item
+            chunk_items.append(item)
+        _attach_files(conn, by_pk)
+        items.extend(chunk_items)
+    return items
 
 
 def _attach_files(conn: sqlite3.Connection, by_pk: dict[int, _RawMessage]) -> None:
@@ -346,7 +477,7 @@ def _to_message(
     if not text and not raw.attachments:
         return None
     return Message(
-        id=f"{telegram_id}:{raw.message_id}",
+        id=source_message_id(telegram_id, raw.thread_id, raw.message_id),
         author=raw.author_name,
         date=normalize_date(raw.date),
         text=text,

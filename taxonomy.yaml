@@ -1,0 +1,131 @@
+# Hybrid KB taxonomy: navigation folders + closed tag vocabularies.
+# Reparent agent may only move articles onto existing folder paths.
+# New L2 folders may be proposed in a plan, never auto-created.
+
+folders:
+  - name: Требования и документация
+    children:
+      - Форматы и артефакты
+      - Управление требованиями
+      - Выявление
+  - name: Профессия и развитие
+    children:
+      - Карьера и обучение
+      - Рынок и собеседования
+      - Сообщество
+  - name: UX и проектирование интерфейсов
+    children:
+      - Исследования
+      - Прототипы и паттерны
+  - name: Интеграции и API
+    children:
+      - Паттерны
+      - REST и HTTP
+      - Брокеры сообщений
+      - Гос. интеграции
+  - name: Данные, SQL и хранилища
+    children:
+      - SQL
+      - Моделирование данных
+      - КХД и BI
+      - UML
+  - name: Процессы и BPM
+    children:
+      - BPMN
+      - Camunda
+      - Статусные модели
+  - name: Инструменты аналитика
+    children:
+      - Моделирование
+      - ИИ
+  - name: Методологии разработки
+    children:
+      - SDLC
+  - name: Отраслевые решения
+    children: []
+  - name: Инфраструктура
+    children: []
+
+# Lower index = more specific; wins duplicate-title ties when message_count is equal.
+duplicate_priority:
+  - Инфраструктура
+  - UX и проектирование интерфейсов
+  - Отраслевые решения
+  - Профессия и развитие
+  - Требования и документация
+  - Интеграции и API
+  - Процессы и BPM
+  - Данные, SQL и хранилища
+  - Инструменты аналитика
+  - Методологии разработки
+  - Данные и модели
+  - Методологии и процессы
+
+folder_aliases:
+  Данные и модели: Данные, SQL и хранилища
+  Методологии и процессы: Методологии разработки
+
+cluster_folders:
+  sql: Данные, SQL и хранилища/SQL
+  plantuml: Инструменты аналитика/Моделирование
+  bpmn: Процессы и BPM/BPMN
+
+topics:
+  - требования
+  - выявление
+  - трассируемость
+  - документация
+  - карьера
+  - обучение
+  - собеседования
+  - роли
+  - сообщество
+  - ux
+  - прототипирование
+  - cjm
+  - интеграции
+  - очереди
+  - sql
+  - моделирование-данных
+  - кхд
+  - bpm
+  - статусные-модели
+  - sdlc
+  - инструменты
+  - ии
+  - инфраструктура
+  - отрасль
+  - безопасность
+  - нфр
+
+tech:
+  - kafka
+  - rabbitmq
+  - activemq
+  - postgresql
+  - greenplum
+  - hadoop
+  - hive
+  - elasticsearch
+  - camunda
+  - bpmn
+  - uml
+  - plantuml
+  - drawio
+  - openapi
+  - swagger
+  - rest
+  - soap
+  - smev
+  - oauth
+  - kubernetes
+  - prometheus
+  - grafana
+  - python
+  - "1c"
+
+formats:
+  - howto
+  - glossary
+  - cheatsheet
+  - case

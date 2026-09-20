@@ -23,8 +23,10 @@ from kb_pipeline.models import (
     Hierarchy,
     Message,
     WorkItem,
+    compact_message_contexts,
 )
 from kb_pipeline.persist import (
+    article_final_is_current,
     load_article_record,
     save_article_artifacts,
     save_hierarchy,
@@ -87,6 +89,7 @@ def structure_node(state: PipelineState, config: RunnableConfig) -> dict[str, An
         subchat_id=subchat_id,
         part_file=part_file,
     )
+    updated = compact_message_contexts(updated)
     save_hierarchy(runtime.config, updated)
     articles = dict(state.get("articles") or {})
     for article_id in touched:
@@ -96,7 +99,7 @@ def structure_node(state: PipelineState, config: RunnableConfig) -> dict[str, An
         folder, slug, article = found
         if article_id not in articles:
             record = load_article_record(
-                runtime.config, article_id, article.title, folder, slug
+                runtime.config, article_id, article.title, folder, slug, tags=article.tags
             )
             articles[article_id] = record.model_dump()
         else:
@@ -118,8 +121,7 @@ def _article_messages(state: PipelineState, article_id: str) -> list[Message]:
     if not found:
         return current
     allowed = found[2].message_ids()
-    matched = [item for item in current if item.id in allowed]
-    return matched or current
+    return [item for item in current if item.id in allowed]
 
 
 def generate_node(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
@@ -172,13 +174,29 @@ def critic_node(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
 def polish_node(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
     runtime = _runtime(config)
     articles = dict(state.get("articles") or {})
-    hierarchy = Hierarchy.model_validate(state.get("hierarchy") or {"folders": {}})
+    hierarchy = compact_message_contexts(
+        Hierarchy.model_validate(state.get("hierarchy") or {"folders": {}})
+    )
+    save_hierarchy(runtime.config, hierarchy)
     listing = hierarchy.to_listing()
     backend = runtime.backend("polisher")
     for article_id in state.get("touched_article_ids") or []:
         if article_id not in articles:
             continue
         record = ArticleRecord.model_validate(articles[article_id])
+        if article_final_is_current(runtime.config, record):
+            loaded = load_article_record(
+                runtime.config,
+                article_id,
+                record.title,
+                record.folder,
+                record.slug,
+                tags=record.tags,
+            )
+            record.final = loaded.final
+            articles[article_id] = record.model_dump()
+            logger.info("Polish skip %s (final newer than draft and critic)", article_id)
+            continue
         messages = _article_messages(state, article_id)
         critic = CriticReport.model_validate(record.critic_comments or {})
         logger.info("Polish %s", article_id)
@@ -189,10 +207,12 @@ def polish_node(state: PipelineState, config: RunnableConfig) -> dict[str, Any]:
             critic=critic,
             messages=messages,
             article_listing=listing,
+            title=record.title,
+            folder=record.folder,
         )
-        save_article_artifacts(runtime.config, record)
+        save_article_artifacts(runtime.config, record, write_final=True)
         articles[article_id] = record.model_dump()
-    return {"articles": articles, "status": "polished"}
+    return {"articles": articles, "hierarchy": hierarchy.model_dump(), "status": "polished"}
 
 
 def advance_node(state: PipelineState) -> dict[str, Any]:

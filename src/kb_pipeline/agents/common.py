@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
@@ -10,17 +11,32 @@ from kb_pipeline.llm.base import LLMBackend
 from kb_pipeline.models import Message
 
 T = TypeVar("T", bound=BaseModel)
+logger = logging.getLogger(__name__)
 
 
 class LLMError(RuntimeError):
     pass
 
 
-def complete_text(backend: LLMBackend, system: str, user: str) -> str:
+def complete_text(
+    backend: LLMBackend,
+    system: str,
+    user: str,
+    *,
+    fallback: str | None = None,
+) -> str:
     text = backend.complete(system, user, json_mode=False)
-    if not text or not str(text).strip():
-        raise LLMError("Empty LLM response")
-    return str(text).strip()
+    if text and str(text).strip():
+        return str(text).strip()
+    if fallback is not None and str(fallback).strip():
+        logger.warning("Empty LLM response, using fallback without retry")
+        return str(fallback).strip()
+    logger.warning("Empty LLM response, retrying")
+    retry_user = user + "\n\nПредыдущий ответ был пустым. Верни готовый текст."
+    text = backend.complete(system, retry_user, json_mode=False)
+    if text and str(text).strip():
+        return str(text).strip()
+    raise LLMError("Empty LLM response")
 
 
 def complete_json(backend: LLMBackend, system: str, user: str) -> dict[str, Any]:
@@ -32,7 +48,8 @@ def complete_json(backend: LLMBackend, system: str, user: str) -> dict[str, Any]
             user
             + "\n\nПредыдущий ответ нельзя разобрать как JSON: "
             + str(first)
-            + "\nВерни только валидный JSON-объект."
+            + "\nВерни только валидный компактный JSON-объект. "
+            "Не копируй неизменённые части, не пиши длинные цитаты в строках."
         )
         raw = backend.complete(system, retry_user, json_mode=True)
         try:
